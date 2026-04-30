@@ -135,39 +135,32 @@ export async function GET(req: Request) {
     };
 
  
+    const page = Number(searchParams.get("page")) || 1;
+    const skip = (page - 1) * limit;
+    
     const [tours, total] = await Promise.all([
       prisma.tour.findMany({
         where,
-        take: limit + 1,
-        ...(cursor && {
-          cursor: { id: cursor },
-          skip: 1,
-        }),
+        skip,
+        take: limit,
         orderBy,
       }),
       prisma.tour.count({ where }),
     ]);
-
-    // cursor logic
-    const hasNextPage = tours.length > limit;
-    const data = hasNextPage ? tours.slice(0, limit) : tours;
-
-    const nextCursor = hasNextPage
-      ? data[data.length - 1].id
-      : null;
-
-      console.log(" i am the data", data)
-
+    
     const response = {
       success: true,
-      data,
+      data: tours,
       meta: {
-        hasNextPage,
-        nextCursor,
+        currentPage: page,
         total,
         totalPages: Math.ceil(total / limit),
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPreviousPage: page > 1,
       },
     };
+    
+    console.log("i am the data",response)
 
     //cache
     await redis.set(cacheKey, response, {

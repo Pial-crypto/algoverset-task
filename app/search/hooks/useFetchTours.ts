@@ -22,7 +22,8 @@ export const useFetchTours = ({
   const [error, setError] = useState<string | null>(null);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
-
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [hasPreviousPage, setHasPreviousPage] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
 
@@ -87,6 +88,8 @@ export const useFetchTours = ({
         setTours(res.data.data || []);
         setTotalPages(res.data.meta?.totalPages || 1);
         setTotal(res.data.meta?.total || 0);
+        setHasNextPage(res.data.meta?.hasNextPage || false);
+setHasPreviousPage(res.data.meta?.hasPreviousPage || false);
       } catch (err: any) {
         if (err.name === 'CanceledError') return;
         console.error(err);
@@ -101,9 +104,18 @@ export const useFetchTours = ({
 
     return () => {
       clearTimeout(delay);
-      controller.abort(); // cancel previous request
+      controller.abort(); 
     };
   }, [currentPage, perPage, sortBy, JSON.stringify(filters)]);
+  
 
-  return { tours, loading, error, totalPages, total };
+  return {
+    tours,
+    loading,
+    error,
+    totalPages,
+    total,
+    hasNextPage,
+    hasPreviousPage
+  };
 };

@@ -19,13 +19,15 @@ export const Pagination = ({
 }: PaginationProps) => {
   if (totalPages <= 1) return null;
 
-  const pages = Array.from({ length: Math.min(totalPages, 3) }, (_, idx) => idx + 1);
-
+ // const pages = Array.from({ length: Math.min(totalPages, 3) }, (_, idx) => idx + 1);
+ const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
   return (
     <div className="my-8 flex items-center justify-center gap-2">
       <button
         type="button"
-        onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+        
+        disabled={!_hasPreviousPage}
+        onClick={() => onPageChange(currentPage - 1)}
         className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#9aa8c7] bg-white text-[#64748b]"
       >
         <ChevronLeft className="h-4 w-4" />
@@ -46,7 +48,9 @@ export const Pagination = ({
       ))}
       <button
         type="button"
-        onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+        disabled={!_hasNextPage}
+       
+        onClick={() => onPageChange(currentPage + 1)}
         className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#9aa8c7] bg-white text-[#64748b]"
       >
         <ChevronRight className="h-4 w-4" />
