@@ -44,10 +44,16 @@ model Tour {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
- 
   @@index([region])
   @@index([price])
-  @@index([title])
-  @@index([createdAt])
-  @@index([region, price]) // composite (advanced)
+  @@index([duration])
+  @@index([rating])
+  @@index([reviews])
+  @@index([startDate])
+
+  @@index([region, price])
+  @@index([region, duration])
+
+  @@index([language], type: Gin)
+  @@index([adventureStyle], type: Gin)
 }
