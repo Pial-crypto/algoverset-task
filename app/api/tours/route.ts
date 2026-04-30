@@ -1,34 +1,35 @@
 import { prisma } from "../../lib/prisma";
 import { redis } from "../../lib/redis";
 import { ratelimit } from "../../lib/ratelimit";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
-const getMulti = (sp: URLSearchParams, key: string) => {
+export const runtime = "nodejs";
+
+
+const getMulti = (sp: URLSearchParams, key: string): string[] => {
   return [
     ...sp.getAll(key),
     ...sp.getAll(`${key}[]`)
   ].filter(Boolean);
 };
 
-export const runtime = "nodejs";
-
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
-  //  rate limit
+  // rate limit
   const ip = req.headers.get("x-forwarded-for") || "anonymous";
   const ua = req.headers.get("user-agent") || "";
-  const key = `${ip}:${ua}`;
+  const rlKey = `${ip}:${ua}`;
+  const { success } = await ratelimit.limit(rlKey);
 
-  const { success } = await ratelimit.limit(key);
   if (!success) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
 
-  // cache version (for invalidation)
+  // cache version for invalidation
   const version = (await redis.get<string>("tours:version")) || "1";
 
-  //  stable cache key
+  // stable cache key (params sorted)
   const params = [...searchParams.entries()]
     .sort()
     .map(([k, v]) => `${k}=${v}`)
@@ -37,9 +38,10 @@ export async function GET(req: Request) {
   const cacheKey = `tours:v${version}:${params}`;
 
   try {
-    //  cache hit
+ 
     const cached = await redis.get(cacheKey);
     if (cached) {
+    console.log("I am cache" ,cacheKey,cached)
       return Response.json(cached, {
         headers: {
           "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
@@ -47,14 +49,15 @@ export async function GET(req: Request) {
       });
     }
 
-    //  cursor
+
+    // cursor
     const cursor = searchParams.get("cursor");
 
-    //  limit
+    // limit
     const limitRaw = Number(searchParams.get("limit")) || 10;
     const limit = Math.min(Math.max(limitRaw, 1), 50);
 
-    //  filters
+    // filters
     const search = searchParams.get("search") || "";
 
     const regions = getMulti(searchParams, "region");
@@ -70,7 +73,7 @@ export async function GET(req: Request) {
     const startDate = searchParams.get("startDate");
     const parsedDate = startDate ? new Date(startDate) : null;
 
-    //  sorting
+    // sorting
     const sortBy = searchParams.get("sortBy") || "most-popular";
 
     const sortMap: Record<string, Prisma.TourOrderByWithRelationInput> = {
@@ -85,40 +88,53 @@ export async function GET(req: Request) {
 
     const orderBy = sortMap[sortBy] || { createdAt: "desc" };
 
-    //  where
+    
+    const conditions: Prisma.TourWhereInput[] = [];
+
+    if (search) {
+      conditions.push({
+        title: {
+          contains: search,
+          mode: Prisma.QueryMode.insensitive,
+        },
+      });
+    }
+
+    if (regions.length) {
+      conditions.push({ region: { in: regions } });
+    }
+
+    conditions.push({
+      price: { gte: minPrice, lte: maxPrice },
+    });
+
+    conditions.push({
+      duration: { gte: minDuration, lte: maxDuration },
+    });
+
+    if (adventureStyles.length) {
+      conditions.push({
+        adventureStyle: { hasSome: adventureStyles },
+      });
+    }
+
+    if (languages.length) {
+      conditions.push({
+        language: { hasSome: languages },
+      });
+    }
+
+    if (parsedDate) {
+      conditions.push({
+        startDate: { gte: parsedDate },
+      });
+    }
+
     const where: Prisma.TourWhereInput = {
-      AND: [
-        ...(search
-          ? [{ title: { contains: search, mode: "insensitive" } }]
-          : []),
-
-        ...(regions.length > 0
-          ? [{ region: { in: regions } }]
-          : []),
-
-        {
-          price: { gte: minPrice, lte: maxPrice },
-        },
-
-        {
-          duration: { gte: minDuration, lte: maxDuration },
-        },
-
-        ...(adventureStyles.length > 0
-          ? [{ adventureStyle: { hasSome: adventureStyles } }]
-          : []),
-
-        ...(languages.length > 0
-          ? [{ language: { hasSome: languages } }]
-          : []),
-
-        ...(parsedDate
-          ? [{ startDate: { gte: parsedDate } }]
-          : []),
-      ],
+      AND: conditions,
     };
 
-    //  parallel query
+ 
     const [tours, total] = await Promise.all([
       prisma.tour.findMany({
         where,
@@ -132,13 +148,15 @@ export async function GET(req: Request) {
       prisma.tour.count({ where }),
     ]);
 
-    //  cursor logic
+    // cursor logic
     const hasNextPage = tours.length > limit;
     const data = hasNextPage ? tours.slice(0, limit) : tours;
 
     const nextCursor = hasNextPage
       ? data[data.length - 1].id
       : null;
+
+      console.log(" i am the data", data)
 
     const response = {
       success: true,
@@ -151,12 +169,12 @@ export async function GET(req: Request) {
       },
     };
 
-    //  cache save
+    //cache
     await redis.set(cacheKey, response, {
       ex: 60 + Math.floor(Math.random() * 30),
     });
 
-    //  CDN header
+ //CDN header
     return Response.json(response, {
       headers: {
         "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
@@ -166,7 +184,9 @@ export async function GET(req: Request) {
   } catch (error) {
     console.error(error);
 
+  
     const cached = await redis.get(cacheKey);
+    console.log("cache",cached)
     if (cached) {
       return Response.json(cached, {
         headers: {
