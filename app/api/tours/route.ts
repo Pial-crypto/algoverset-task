@@ -10,35 +10,53 @@ const getMulti = (sp: URLSearchParams, key: string) => {
   ].filter(Boolean);
 };
 
+export const runtime = "nodejs";
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-console.log(searchParams," I am the search param")
+
+  //  rate limit
+  const ip = req.headers.get("x-forwarded-for") || "anonymous";
+  const ua = req.headers.get("user-agent") || "";
+  const key = `${ip}:${ua}`;
+
+  const { success } = await ratelimit.limit(key);
+  if (!success) {
+    return Response.json({ error: "Too many requests" }, { status: 429 });
+  }
+
+  // cache version (for invalidation)
   const version = (await redis.get<string>("tours:version")) || "1";
-  const cacheKey = `tours:v${version}:${searchParams.toString()}`;
+
+  //  stable cache key
+  const params = [...searchParams.entries()]
+    .sort()
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+
+  const cacheKey = `tours:v${version}:${params}`;
 
   try {
-    // rate limit
-    const ip = req.headers.get("x-forwarded-for") || "anonymous";
-    const { success } = await ratelimit.limit(ip);
-
-    if (!success) {
-      return Response.json({ error: "Too many requests" }, { status: 429 });
+    //  cache hit
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return Response.json(cached, {
+        headers: {
+          "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
+        },
+      });
     }
 
-    // cache
-    const cached = await redis.get(cacheKey);
-    console.log(cacheKey," ",cached)
-    if (cached) return Response.json(cached);
-
-    // cursor
+    //  cursor
     const cursor = searchParams.get("cursor");
 
-    // limit
+    //  limit
     const limitRaw = Number(searchParams.get("limit")) || 10;
     const limit = Math.min(Math.max(limitRaw, 1), 50);
 
-    // filters
+    //  filters
     const search = searchParams.get("search") || "";
+
     const regions = getMulti(searchParams, "region");
     const adventureStyles = getMulti(searchParams, "adventureStyle");
     const languages = getMulti(searchParams, "language");
@@ -52,7 +70,7 @@ console.log(searchParams," I am the search param")
     const startDate = searchParams.get("startDate");
     const parsedDate = startDate ? new Date(startDate) : null;
 
-    // sorting
+    //  sorting
     const sortBy = searchParams.get("sortBy") || "most-popular";
 
     const sortMap: Record<string, Prisma.TourOrderByWithRelationInput> = {
@@ -67,7 +85,7 @@ console.log(searchParams," I am the search param")
 
     const orderBy = sortMap[sortBy] || { createdAt: "desc" };
 
-    // where (clean)
+    //  where
     const where: Prisma.TourWhereInput = {
       AND: [
         ...(search
@@ -100,7 +118,7 @@ console.log(searchParams," I am the search param")
       ],
     };
 
-    // query
+    //  parallel query
     const [tours, total] = await Promise.all([
       prisma.tour.findMany({
         where,
@@ -111,13 +129,13 @@ console.log(searchParams," I am the search param")
         }),
         orderBy,
       }),
-      prisma.tour.count({where}), 
-    ])
+      prisma.tour.count({ where }),
+    ]);
 
-    // cursor logic
+    //  cursor logic
     const hasNextPage = tours.length > limit;
     const data = hasNextPage ? tours.slice(0, limit) : tours;
-console.log(data, "datas are here ")
+
     const nextCursor = hasNextPage
       ? data[data.length - 1].id
       : null;
@@ -133,17 +151,29 @@ console.log(data, "datas are here ")
       },
     };
 
-    await redis.set(cacheKey, response, { ex: 60 });
+    //  cache save
+    await redis.set(cacheKey, response, {
+      ex: 60 + Math.floor(Math.random() * 30),
+    });
 
-    return Response.json(response);
+    //  CDN header
+    return Response.json(response, {
+      headers: {
+        "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
+      },
+    });
 
   } catch (error) {
     console.error(error);
 
-
     const cached = await redis.get(cacheKey);
-    console.log(cached)
-    if (cached) return Response.json(cached);
+    if (cached) {
+      return Response.json(cached, {
+        headers: {
+          "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
+        },
+      });
+    }
 
     return Response.json(
       { success: false, message: "Internal Server Error" },
