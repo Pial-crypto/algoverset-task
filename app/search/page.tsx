@@ -17,6 +17,8 @@ export default function SearchPage() {
   const [pricePerDay, setPricePerDay] = useState(false);
 
   const [sortBy, setSortBy] = useState('most-popular');
+  
+
  
   const { filters,
     toggleRegion,
